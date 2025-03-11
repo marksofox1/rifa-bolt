@@ -3,14 +3,7 @@ import { supabase } from '../lib/supabase'
 
 const AuthContext = createContext()
 
-export function useAuth() {
-  const context = useContext(AuthContext)
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider')
-  }
-  return context
-}
-
+// Moved the hook definition after the provider component
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -46,34 +39,55 @@ export function AuthProvider({ children }) {
   }
 
   const register = async (email, password, name) => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          name,
-        },
-      },
-    })
-    
-    if (error) throw error
-    
-    // Criar perfil do usuário
-    if (data.user) {
-      const { error: profileError } = await supabase
+    try {
+      // Primeiro, verificar se o usuário já existe
+      const { data: existingUsers } = await supabase
         .from('profiles')
-        .insert([
-          { 
-            id: data.user.id, 
-            name, 
-            email 
-          }
-        ])
+        .select('email')
+        .eq('email', email)
+        .limit(1);
       
-      if (profileError) throw profileError
+      if (existingUsers && existingUsers.length > 0) {
+        throw new Error('User already registered');
+      }
+      
+      // Registrar o usuário no Auth
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            name,
+          },
+        },
+      });
+      
+      if (error) throw error;
+      
+      // Criar perfil do usuário apenas se o registro for bem-sucedido
+      if (data.user) {
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .insert([
+            { 
+              id: data.user.id, 
+              name, 
+              email 
+            }
+          ]);
+        
+        if (profileError) {
+          console.error('Erro ao criar perfil:', profileError);
+          // Tentar reverter o registro de autenticação se possível
+          throw profileError;
+        }
+      }
+      
+      return data;
+    } catch (error) {
+      console.error('Erro completo no registro:', error);
+      throw error;
     }
-    
-    return data
   }
 
   const logout = async () => {
@@ -90,4 +104,13 @@ export function AuthProvider({ children }) {
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+}
+
+// Hook definition moved here to be compatible with Fast Refresh
+export function useAuth() {
+  const context = useContext(AuthContext)
+  if (context === undefined) {
+    throw new Error('useAuth must be used within an AuthProvider')
+  }
+  return context
 }
